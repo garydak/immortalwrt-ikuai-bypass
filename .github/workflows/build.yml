@@ -1,0 +1,161 @@
+name: Build ImmortalWrt (Auto-Update & Dual Output)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '指定构建版本 (留空或输入 auto 则自动检测官方最新稳定版)'
+        required: false
+        default: 'auto'
+      force:
+        description: '强制重新编译 (即使该版本已存在也重新构建)'
+        required: false
+        type: boolean
+        default: false
+
+  schedule:
+    # 每天北京时间早晨 08:00 (UTC 00:00) 自动检查一次官方是否有新稳定版
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    name: Check Version and Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 检查官方最新稳定版本与比对
+        id: check_ver
+        run: |
+          # 1. 确定目标版本
+          INPUT_VER="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VER" ] && [ "$INPUT_VER" != "auto" ]; then
+            TARGET_TAG="$INPUT_VER"
+            echo "使用用户手动指定的版本: $TARGET_TAG"
+          else
+            # 通过 GitHub API 获取官方最新正式 Release (自动过滤 pre-release 与 rc 候选版)
+            LATEST_TAG=$(curl -sL https://api.github.com/repos/immortalwrt/immortalwrt/releases | jq -r 'map(select(.prerelease == false and .draft == false)) | .[0].tag_name' | sed 's/^v//')
+            if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+              # 如果 API 偶发限流，从下载站页面回退探测
+              LATEST_TAG=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+.[0-9]+.[0-9]+/' | head -n 1 | grep -oE '[0-9]+.[0-9]+.[0-9]+')
+            fi
+            TARGET_TAG="$LATEST_TAG"
+            echo "检测到官方最新稳定版本: $TARGET_TAG"
+          fi
+
+          echo "release_tag=$TARGET_TAG" >> $GITHUB_OUTPUT
+
+          # 2. 检查本仓库是否已经编译过该版本
+          FORCE="${{ github.event.inputs.force }}"
+          REPO_TAG="v${TARGET_TAG}"
+          EXISTS=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${REPO_TAG}" | jq -r .tag_name)
+
+          if [ "$EXISTS" = "$REPO_TAG" ] && [ "$FORCE" != "true" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo ">> 状态: 版本 $TARGET_TAG 已经发布过固件，无需重复编译！"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo ">> 状态: 发现新版本 $TARGET_TAG 或满足触发条件，立即启动构建！"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 准备构建环境
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev \
+            gawk git gettext libssl-dev xsltproc wget curl unzip qemu-utils zstd jq
+
+      - name: 下载官方 ImageBuilder
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          TARGET_TAG="${{ steps.check_ver.outputs.release_tag }}"
+          ARCH="x86-64"
+          IB_URL="https://downloads.immortalwrt.org/releases/${TARGET_TAG}/targets/x86/64/immortalwrt-imagebuilder-${TARGET_TAG}-${ARCH}.Linux-x86_64.tar.zst"
+          echo "下载构建引擎: $IB_URL"
+          wget -qO ib.tar.zst "$IB_URL"
+          tar --zstd -xf ib.tar.zst
+          mv immortalwrt-imagebuilder-* ib
+          mkdir -p ib/packages ib/files/opt/ikuai-bypass
+
+      - name: 注入 iKuai Bypass (IPK 插件与 CLI 核心)
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          # 1. 抓取作者官方最新发布的 LuCI 面板 IPK
+          IPK_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-luci-openwrt-all.ipk"
+          wget -qO ib/packages/luci-app-ikuai-bypass.ipk "$IPK_URL"
+
+          # 2. 抓取 x86_64 CLI 核心程序并解压就位
+          CORE_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-linux-amd64.tar.gz"
+          wget -qO /tmp/core.tar.gz "$CORE_URL"
+          tar -zxf /tmp/core.tar.gz -C ib/files/opt/ikuai-bypass/
+          chmod +x ib/files/opt/ikuai-bypass/ikuai-bypass
+          rm -f /tmp/core.tar.gz
+
+          # 3. 复制预设文件 (首次启动脚本 + 预配好且解除国内锁的 config.yml)
+          if [ -d "files" ]; then
+            cp -r files/* ib/files/
+          fi
+          chmod +x ib/files/etc/uci-defaults/* || true
+
+      - name: 编译生成基础镜像
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          cd ib
+          make image PROFILE="generic" \
+            PACKAGES="base-files ca-bundle dropbear e2fsprogs firewall4 fstools \
+            grub2-bios-setup kmod-button-hotplug kmod-nft-offload libc libgcc \
+            libustream-mbedtls logd mtd netifd nftables odhcp6c odhcpd-ipv6only \
+            partx-utils procd-ujail uci uclient-fetch urandom-seed urngd \
+            -kmod-amazon-ena -kmod-amd-xgbe -kmod-bnx2 -kmod-dmac-intel -kmod-e1000 \
+            -kmod-e1000e -kmod-forcedeth -kmod-igb -kmod-ixgbe -kmod-r8169 -kmod-tg3 \
+            -kmod-drm-i915 qemu-ga luci luci-ssl luci-i18n-base-zh-cn \
+            luci-app-attendedsysupgrade luci-i18n-attendedsysupgrade-zh-cn -ppp \
+            -ppp-mod-pppoe -dnsmasq dnsmasq-full luci-app-openclash bash curl \
+            ca-certificates coreutils coreutils-nohup ip-full ipset kmod-tun \
+            kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig \
+            luci-app-ikuai-bypass" \
+            FILES="files"
+
+      - name: 转码生成 PVE 专用 QCOW2 与 ESXi 专用 VMDK
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          cd ib/bin/targets/x86/64/
+          gunzip -k *combined-ext4.img.gz || true
+          RAW_IMG=$(ls *combined-ext4.img | head -n 1)
+
+          # 1. 产出 PVE 专用 QCOW2 (极致压缩)
+          qemu-img convert -f raw -O qcow2 -c "$RAW_IMG" immortalwrt-pve.qcow2
+
+          # 2. 产出 ESXi 专用 VMDK
+          qemu-img convert -f raw -O vmdk -o subformat=monolithicFlat "$RAW_IMG" immortalwrt-esxi.vmdk
+          gzip -9 -k immortalwrt-esxi.vmdk
+
+          mkdir -p /tmp/output/
+          cp immortalwrt-pve.qcow2 /tmp/output/
+          cp immortalwrt-esxi.vmdk.gz /tmp/output/
+          cp *combined-ext4.img.gz /tmp/output/
+
+      - name: 自动发布为 GitHub Release (永久保存、直链下载)
+        if: steps.check_ver.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.check_ver.outputs.release_tag }}"
+          name: "ImmortalWrt v${{ steps.check_ver.outputs.release_tag }} (PVE & ESXi Auto-Build)"
+          body: |
+            ## 🎉 自动构建版本：ImmortalWrt v${{ steps.check_ver.outputs.release_tag }}
+            
+            ### 📌 特性说明
+            * **适用环境**：PVE 9.2.2 / ESXi 7.0/8.0
+            * **核心组件**：内置 OpenClash、dnsmasq-full、qemu-ga 以及 iKuai Bypass
+            * **开机零配置**：默认 IP 为 `192.168.0.2/24`，网关指向爱快 `192.168.0.1`，开机即用
+            * **分流优化**：预置解除国内流量锁死的配置，完美兼容爱快双线 2:1 多线负载
+            
+            ### 📥 镜像下载指引
+            * **PVE 9.2.2 推荐**：下载 `immortalwrt-pve.qcow2`，使用 `qm importdisk <VMID> immortalwrt-pve.qcow2 local-lvm` 导入。
+            * **ESXi 推荐**：下载 `immortalwrt-esxi.vmdk.gz`，解压后上传至存储直接挂载。
+          files: /tmp/output/*
