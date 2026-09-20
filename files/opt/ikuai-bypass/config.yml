@@ -1,0 +1,15 @@
+ikuai-url: https://192.168.0.1
+username: admin
+password: your_ikuai_password
+ikuai-url-ignore-cert: true
+cron: "0 7 * * *"
+custom-lan-ip: "192.168.0.3-192.168.0.254"
+next-hop-gateway: "192.168.0.2"
+mode: ispdomain
+stream-ipport:
+  负责分流到下一跳:
+    comment: IKB负责分流
+    interface: 192.168.0.2
+    nexthop: "192.168.0.2"
+    src-ip: "192.168.0.3-192.168.0.254"
+    stream-type: 1
