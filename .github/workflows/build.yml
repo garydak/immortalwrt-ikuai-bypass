@@ -101,13 +101,13 @@ jobs:
           fi
           rm -rf /tmp/ipk_extract /tmp/ikuai-bypass.ipk
 
-          # 2. 抓取 x86_64 CLI 核心程序并解压就位
-          CORE_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-linux-amd64.tar.gz"
-          wget -qO /tmp/core.tar.gz "$CORE_URL"
+          # 2. 抓取 x86_64 CLI 核心程序 (zip 格式) 并解压就位
+          CORE_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-cli-linux-x86_64.zip"
+          wget -qO /tmp/core.zip "$CORE_URL"
           mkdir -p ib/files/opt/ikuai-bypass
-          tar -zxf /tmp/core.tar.gz -C ib/files/opt/ikuai-bypass/
-          chmod +x ib/files/opt/ikuai-bypass/ikuai-bypass
-          rm -f /tmp/core.tar.gz
+          unzip -o /tmp/core.zip -d ib/files/opt/ikuai-bypass/
+          chmod +x ib/files/opt/ikuai-bypass/* || true
+          rm -f /tmp/core.zip
 
           # 3. 复制预设文件 (首次启动脚本 + 预配好且解除国内锁的 config.yml)
           if [ -d "files" ]; then
@@ -127,8 +127,7 @@ jobs:
             -kmod-amazon-ena -kmod-amd-xgbe -kmod-bnx2 -kmod-dmac-intel -kmod-e1000 \
             -kmod-e1000e -kmod-forcedeth -kmod-igb -kmod-ixgbe -kmod-r8169 -kmod-tg3 \
             -kmod-drm-i915 qemu-ga luci luci-ssl luci-i18n-base-zh-cn \
-            luci-app-attendedsysupgrade luci-i18n-attendedsysupgrade-zh-cn -ppp \
-            -ppp-mod-pppoe -dnsmasq dnsmasq-full luci-app-openclash bash curl \
+            -ppp -ppp-mod-pppoe -dnsmasq dnsmasq-full luci-app-openclash bash curl \
             ca-certificates coreutils coreutils-nohup ip-full ipset kmod-tun \
             kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig" \
             FILES="files"
