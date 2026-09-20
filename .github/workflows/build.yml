@@ -37,17 +37,8 @@ jobs:
             TARGET_TAG="$INPUT_VER"
             echo "使用用户手动指定的版本: $TARGET_TAG"
           else
-            # 探测官方最新稳定版本 (通过 releases 目录版本号自然升序排序取最新一个)
-            LATEST_TAG=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1)
-            if [ -z "$LATEST_TAG" ]; then
-              # 如果下载站探测失败，从 GitHub API 探测
-              LATEST_TAG=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/immortalwrt/immortalwrt/releases | jq -r 'map(select(.prerelease == false and .draft == false)) | .[0].tag_name' | sed 's/^v//')
-            fi
-            if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
-              TARGET_TAG="25.12.2"
-            else
-              TARGET_TAG="$LATEST_TAG"
-            fi
+            # 从官方 release 目录自动抓取最新真实版本 (例如 25.12.2)
+            TARGET_TAG=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/' | sed 's#href="##; s#/##' | sort -V | tail -n 1)
             echo "检测到官方最新稳定版本: $TARGET_TAG"
           fi
 
@@ -72,7 +63,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev \
-            gawk git gettext libssl-dev xsltproc wget curl unzip qemu-utils zstd jq
+            gawk git gettext libssl-dev xsltproc wget curl unzip qemu-utils zstd jq \
+            genisoimage
+          sudo ln -sf /usr/bin/genisoimage /usr/bin/mkisofs || true
 
       - name: 下载官方 ImageBuilder
         if: steps.check_ver.outputs.should_build == 'true'
@@ -89,25 +82,32 @@ jobs:
       - name: 注入 iKuai Bypass (IPK 插件与 CLI 核心)
         if: steps.check_ver.outputs.should_build == 'true'
         run: |
-          # 1. 抓取作者官方最新发布的 LuCI 面板 IPK 并解包进 rootfs
-          IPK_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-luci-openwrt-all.ipk"
-          wget -qO /tmp/ikuai-bypass.ipk "$IPK_URL"
-          mkdir -p /tmp/ipk_extract
-          tar -xzf /tmp/ikuai-bypass.ipk -C /tmp/ipk_extract/ 2>/dev/null || ar x /tmp/ikuai-bypass.ipk --output=/tmp/ipk_extract/ || true
-          if [ -f /tmp/ipk_extract/data.tar.gz ]; then
-            tar -xzf /tmp/ipk_extract/data.tar.gz -C ib/files/
-          elif [ -f /tmp/ipk_extract/data.tar.zst ]; then
-            tar --zstd -xf /tmp/ipk_extract/data.tar.zst -C ib/files/
+          # 1. 抓取与提取 LuCI 控制面板
+          IPK_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test("luci-app-ikuai-bypass.*\\.ipk$")) | .browser_download_url' | head -n 1)
+          echo "下载 LuCI 插件: $IPK_URL"
+          wget -qO /tmp/luci-ikuai-bypass.ipk "$IPK_URL"
+          
+          # 直接提取 ipk 内的文件系统到 ib/files (全面兼容 apk 与 opkg 架构)
+          mkdir -p /tmp/ipk-extract
+          tar -zxf /tmp/luci-ikuai-bypass.ipk -C /tmp/ipk-extract/ || ar -x /tmp/luci-ikuai-bypass.ipk --output=/tmp/ipk-extract/ || true
+          if [ -f /tmp/ipk-extract/data.tar.gz ]; then
+            tar -zxf /tmp/ipk-extract/data.tar.gz -C ib/files/
+          elif [ -f /tmp/ipk-extract/data.tar.xz ]; then
+            tar -xf /tmp/ipk-extract/data.tar.xz -C ib/files/
           fi
-          rm -rf /tmp/ipk_extract /tmp/ikuai-bypass.ipk
 
-          # 2. 抓取 x86_64 CLI 核心程序 (zip 格式) 并解压就位
-          CORE_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-cli-linux-x86_64.zip"
-          wget -qO /tmp/core.zip "$CORE_URL"
-          mkdir -p ib/files/opt/ikuai-bypass
-          unzip -o /tmp/core.zip -d ib/files/opt/ikuai-bypass/
-          chmod +x ib/files/opt/ikuai-bypass/* || true
-          rm -f /tmp/core.zip
+          # 2. 抓取 x86_64 CLI 核心程序并解压就位
+          CLI_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test("ikuai-bypass-cli-linux-x86_64.*\\.zip$")) | .browser_download_url' | head -n 1)
+          if [ -z "$CLI_URL" ] || [ "$CLI_URL" = "null" ]; then
+            CLI_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-cli-linux-x86_64.zip"
+          fi
+          echo "下载 CLI 核心程序: $CLI_URL"
+          wget -qO /tmp/cli.zip "$CLI_URL"
+          unzip -o /tmp/cli.zip -d ib/files/opt/ikuai-bypass/
+          chmod +x ib/files/opt/ikuai-bypass/ikuai-bypass* || true
+          if [ -f ib/files/opt/ikuai-bypass/ikuai-bypass-cli-linux-x86_64 ]; then
+            mv ib/files/opt/ikuai-bypass/ikuai-bypass-cli-linux-x86_64 ib/files/opt/ikuai-bypass/ikuai-bypass
+          fi
 
           # 3. 复制预设文件 (首次启动脚本 + 预配好且解除国内锁的 config.yml)
           if [ -d "files" ]; then
@@ -127,7 +127,8 @@ jobs:
             -kmod-amazon-ena -kmod-amd-xgbe -kmod-bnx2 -kmod-dmac-intel -kmod-e1000 \
             -kmod-e1000e -kmod-forcedeth -kmod-igb -kmod-ixgbe -kmod-r8169 -kmod-tg3 \
             -kmod-drm-i915 qemu-ga luci luci-ssl luci-i18n-base-zh-cn \
-            -ppp -ppp-mod-pppoe -dnsmasq dnsmasq-full luci-app-openclash bash curl \
+            luci-app-attendedsysupgrade luci-i18n-attendedsysupgrade-zh-cn -ppp \
+            -ppp-mod-pppoe -dnsmasq dnsmasq-full bash curl \
             ca-certificates coreutils coreutils-nohup ip-full ipset kmod-tun \
             kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig" \
             FILES="files"
@@ -137,28 +138,22 @@ jobs:
         run: |
           cd ib/bin/targets/x86/64/
           ls -la
-          for gz in *combined*.img.gz; do
-            if [ -f "$gz" ]; then
-              gunzip -k "$gz"
-            fi
-          done
-          RAW_IMG=$(ls *combined*.img 2>/dev/null | grep -v 'efi' | head -n 1)
-          if [ -z "$RAW_IMG" ]; then
-            RAW_IMG=$(ls *combined*.img 2>/dev/null | head -n 1)
-          fi
-          echo "选定基础 Raw 镜像: $RAW_IMG"
+          RAW_GZ=$(ls *ext4-combined.img.gz *combined-ext4.img.gz *combined*.img.gz 2>/dev/null | head -n 1)
+          echo "找到原始镜像: $RAW_GZ"
+          gunzip -k "$RAW_GZ"
+          RAW_IMG="${RAW_GZ%.gz}"
 
-          # 1. 产出 PVE 专用 QCOW2 (VirtIO 极致压缩)
+          # 1. 产出 PVE 专用 QCOW2 (极致压缩)
           qemu-img convert -f raw -O qcow2 -c "$RAW_IMG" immortalwrt-pve.qcow2
 
-          # 2. 产出 ESXi 专用 VMDK (monolithicFlat 单盘兼容格式)
+          # 2. 产出 ESXi 专用 VMDK
           qemu-img convert -f raw -O vmdk -o subformat=monolithicFlat "$RAW_IMG" immortalwrt-esxi.vmdk
           gzip -9 -k immortalwrt-esxi.vmdk
 
           mkdir -p /tmp/output/
           cp immortalwrt-pve.qcow2 /tmp/output/
           cp immortalwrt-esxi.vmdk.gz /tmp/output/
-          cp *combined*.img.gz /tmp/output/
+          cp "$RAW_GZ" /tmp/output/
           ls -lh /tmp/output/
 
       - name: 自动发布为 GitHub Release (永久保存、直链下载)
@@ -172,11 +167,12 @@ jobs:
             
             ### 📌 特性说明
             * **适用环境**：PVE 9.2.2 / ESXi 7.0/8.0
-            * **核心组件**：内置 OpenClash、dnsmasq-full、qemu-ga 以及 iKuai Bypass
+            * **核心组件**：内置 dnsmasq-full、qemu-ga 以及 iKuai Bypass (CLI + LuCI 界面)
             * **开机零配置**：默认 IP 为 `192.168.0.2/24`，网关指向爱快 `192.168.0.1`，开机即用
             * **分流优化**：预置解除国内流量锁死的配置，完美兼容爱快双线 2:1 多线负载
             
             ### 📥 镜像下载指引
             * **PVE 9.2.2 推荐**：下载 `immortalwrt-pve.qcow2`，使用 `qm importdisk <VMID> immortalwrt-pve.qcow2 local-lvm` 导入。
             * **ESXi 推荐**：下载 `immortalwrt-esxi.vmdk.gz`，解压后上传至存储直接挂载。
+            * **通用 RAW 格式**：下载原始压缩包，适用于物理机写盘或自转其他格式。
           files: /tmp/output/*
