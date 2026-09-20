@@ -83,13 +83,16 @@ jobs:
         if: steps.check_ver.outputs.should_build == 'true'
         run: |
           # 1. 抓取与提取 LuCI 控制面板
-          IPK_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test("luci-app-ikuai-bypass.*\\.ipk$")) | .browser_download_url' | head -n 1)
+          IPK_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*luci.*\\.ipk$")) | .browser_download_url' | head -n 1)
+          if [ -z "$IPK_URL" ] || [ "$IPK_URL" = "null" ]; then
+            IPK_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-luci-openwrt-all.ipk"
+          fi
           echo "下载 LuCI 插件: $IPK_URL"
           wget -qO /tmp/luci-ikuai-bypass.ipk "$IPK_URL"
           
           # 直接提取 ipk 内的文件系统到 ib/files (全面兼容 apk 与 opkg 架构)
           mkdir -p /tmp/ipk-extract
-          tar -zxf /tmp/luci-ikuai-bypass.ipk -C /tmp/ipk-extract/ || ar -x /tmp/luci-ikuai-bypass.ipk --output=/tmp/ipk-extract/ || true
+          tar -zxf /tmp/luci-ikuai-bypass.ipk -C /tmp/ipk-extract/ 2>/dev/null || (cd /tmp/ipk-extract && ar -x /tmp/luci-ikuai-bypass.ipk) || true
           if [ -f /tmp/ipk-extract/data.tar.gz ]; then
             tar -zxf /tmp/ipk-extract/data.tar.gz -C ib/files/
           elif [ -f /tmp/ipk-extract/data.tar.xz ]; then
@@ -97,7 +100,7 @@ jobs:
           fi
 
           # 2. 抓取 x86_64 CLI 核心程序并解压就位
-          CLI_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test("ikuai-bypass-cli-linux-x86_64.*\\.zip$")) | .browser_download_url' | head -n 1)
+          CLI_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*cli-linux-x86_64.*\\.zip$")) | .browser_download_url' | head -n 1)
           if [ -z "$CLI_URL" ] || [ "$CLI_URL" = "null" ]; then
             CLI_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-cli-linux-x86_64.zip"
           fi
