@@ -37,13 +37,17 @@ jobs:
             TARGET_TAG="$INPUT_VER"
             echo "使用用户手动指定的版本: $TARGET_TAG"
           else
-            # 通过 GitHub API 获取官方最新正式 Release (自动过滤 pre-release 与 rc 候选版)
-            LATEST_TAG=$(curl -sL https://api.github.com/repos/immortalwrt/immortalwrt/releases | jq -r 'map(select(.prerelease == false and .draft == false)) | .[0].tag_name' | sed 's/^v//')
-            if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
-              # 如果 API 偶发限流，从下载站页面回退探测
-              LATEST_TAG=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+.[0-9]+.[0-9]+/' | head -n 1 | grep -oE '[0-9]+.[0-9]+.[0-9]+')
+            # 探测官方最新稳定版本 (通过 releases 目录版本号自然升序排序取最新一个)
+            LATEST_TAG=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n 1)
+            if [ -z "$LATEST_TAG" ]; then
+              # 如果下载站探测失败，从 GitHub API 探测
+              LATEST_TAG=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/immortalwrt/immortalwrt/releases | jq -r 'map(select(.prerelease == false and .draft == false)) | .[0].tag_name' | sed 's/^v//')
             fi
-            TARGET_TAG="$LATEST_TAG"
+            if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
+              TARGET_TAG="25.12.2"
+            else
+              TARGET_TAG="$LATEST_TAG"
+            fi
             echo "检测到官方最新稳定版本: $TARGET_TAG"
           fi
 
@@ -85,13 +89,22 @@ jobs:
       - name: 注入 iKuai Bypass (IPK 插件与 CLI 核心)
         if: steps.check_ver.outputs.should_build == 'true'
         run: |
-          # 1. 抓取作者官方最新发布的 LuCI 面板 IPK
+          # 1. 抓取作者官方最新发布的 LuCI 面板 IPK 并解包进 rootfs
           IPK_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-luci-openwrt-all.ipk"
-          wget -qO ib/packages/luci-app-ikuai-bypass.ipk "$IPK_URL"
+          wget -qO /tmp/ikuai-bypass.ipk "$IPK_URL"
+          mkdir -p /tmp/ipk_extract
+          tar -xzf /tmp/ikuai-bypass.ipk -C /tmp/ipk_extract/ 2>/dev/null || ar x /tmp/ikuai-bypass.ipk --output=/tmp/ipk_extract/ || true
+          if [ -f /tmp/ipk_extract/data.tar.gz ]; then
+            tar -xzf /tmp/ipk_extract/data.tar.gz -C ib/files/
+          elif [ -f /tmp/ipk_extract/data.tar.zst ]; then
+            tar --zstd -xf /tmp/ipk_extract/data.tar.zst -C ib/files/
+          fi
+          rm -rf /tmp/ipk_extract /tmp/ikuai-bypass.ipk
 
           # 2. 抓取 x86_64 CLI 核心程序并解压就位
           CORE_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-linux-amd64.tar.gz"
           wget -qO /tmp/core.tar.gz "$CORE_URL"
+          mkdir -p ib/files/opt/ikuai-bypass
           tar -zxf /tmp/core.tar.gz -C ib/files/opt/ikuai-bypass/
           chmod +x ib/files/opt/ikuai-bypass/ikuai-bypass
           rm -f /tmp/core.tar.gz
@@ -117,28 +130,37 @@ jobs:
             luci-app-attendedsysupgrade luci-i18n-attendedsysupgrade-zh-cn -ppp \
             -ppp-mod-pppoe -dnsmasq dnsmasq-full luci-app-openclash bash curl \
             ca-certificates coreutils coreutils-nohup ip-full ipset kmod-tun \
-            kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig \
-            luci-app-ikuai-bypass" \
+            kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig" \
             FILES="files"
 
       - name: 转码生成 PVE 专用 QCOW2 与 ESXi 专用 VMDK
         if: steps.check_ver.outputs.should_build == 'true'
         run: |
           cd ib/bin/targets/x86/64/
-          gunzip -k *combined-ext4.img.gz || true
-          RAW_IMG=$(ls *combined-ext4.img | head -n 1)
+          ls -la
+          for gz in *combined*.img.gz; do
+            if [ -f "$gz" ]; then
+              gunzip -k "$gz"
+            fi
+          done
+          RAW_IMG=$(ls *combined*.img 2>/dev/null | grep -v 'efi' | head -n 1)
+          if [ -z "$RAW_IMG" ]; then
+            RAW_IMG=$(ls *combined*.img 2>/dev/null | head -n 1)
+          fi
+          echo "选定基础 Raw 镜像: $RAW_IMG"
 
-          # 1. 产出 PVE 专用 QCOW2 (极致压缩)
+          # 1. 产出 PVE 专用 QCOW2 (VirtIO 极致压缩)
           qemu-img convert -f raw -O qcow2 -c "$RAW_IMG" immortalwrt-pve.qcow2
 
-          # 2. 产出 ESXi 专用 VMDK
+          # 2. 产出 ESXi 专用 VMDK (monolithicFlat 单盘兼容格式)
           qemu-img convert -f raw -O vmdk -o subformat=monolithicFlat "$RAW_IMG" immortalwrt-esxi.vmdk
           gzip -9 -k immortalwrt-esxi.vmdk
 
           mkdir -p /tmp/output/
           cp immortalwrt-pve.qcow2 /tmp/output/
           cp immortalwrt-esxi.vmdk.gz /tmp/output/
-          cp *combined-ext4.img.gz /tmp/output/
+          cp *combined*.img.gz /tmp/output/
+          ls -lh /tmp/output/
 
       - name: 自动发布为 GitHub Release (永久保存、直链下载)
         if: steps.check_ver.outputs.should_build == 'true'
