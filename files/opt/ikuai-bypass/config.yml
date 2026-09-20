@@ -3,13 +3,28 @@ username: admin
 password: your_ikuai_password
 ikuai-url-ignore-cert: true
 cron: "0 7 * * *"
-custom-lan-ip: "192.168.0.3-192.168.0.254"
+mode: ipgroup
 next-hop-gateway: "192.168.0.2"
-mode: ispdomain
+custom-lan-ip: "192.168.0.3-192.168.0.254"
+
+ip-group:
+  - tag: Telegram
+    url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/telegram.txt
+
 stream-ipport:
-  负责分流到下一跳:
-    comment: IKB负责分流
-    interface: 192.168.0.2
+  - type: "1"
+    opt-tagname: "负责分流到下一跳"
+    interface: ""
     nexthop: "192.168.0.2"
-    src-ip: "192.168.0.3-192.168.0.254"
-    stream-type: 1
+    src-addr: "192.168.0.3-192.168.0.254"
+    dst-addr: "198.18.0.0-198.19.255.255"
+    ip-group: "Telegram"
+    dst-addr-inv: 0
+    prio: 0
+    protocol: "tcp+udp"
+
+webui:
+  port: "19001"
+  user: admin
+  pass: admin888
+  enable: true
