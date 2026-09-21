@@ -133,7 +133,9 @@ jobs:
             luci-app-attendedsysupgrade luci-i18n-attendedsysupgrade-zh-cn -ppp \
             -ppp-mod-pppoe -dnsmasq dnsmasq-full bash curl \
             ca-certificates coreutils coreutils-nohup ip-full ipset kmod-tun \
-            kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig" \
+            kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig \
+            luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn \
+            luci-lua-runtime luci-app-openclash -luci-theme-bootstrap" \
             FILES="files"
 
       - name: 转码生成 PVE 专用 QCOW2 与 ESXi 专用 VMDK
