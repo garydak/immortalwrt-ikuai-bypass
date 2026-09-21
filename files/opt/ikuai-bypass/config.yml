@@ -24,7 +24,8 @@ stream-ipport:
     protocol: "tcp+udp"
 
 webui:
-  port: "19001"
+  enable: true
+  port: 19001
   user: admin
   pass: ""
-  enable: true
+  cdn-prefix: https://cdn.jsdelivr.net/npm
