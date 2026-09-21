@@ -33,28 +33,39 @@ jobs:
         run: |
           # 1. 确定目标版本
           INPUT_VER="${{ github.event.inputs.version }}"
+          OFFICIAL_VER=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/' | sed 's#href="##; s#/##' | sort -V | tail -n 1)
+          
           if [ -n "$INPUT_VER" ] && [ "$INPUT_VER" != "auto" ]; then
-            TARGET_TAG="$INPUT_VER"
-            echo "使用用户手动指定的版本: $TARGET_TAG"
+            RELEASE_TAG="$INPUT_VER"
+            # 检查官方是否存在此版本 ImageBuilder，如果不存在则回退使用官方最新稳定版底包
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://downloads.immortalwrt.org/releases/${INPUT_VER}/targets/x86/64/")
+            if [ "$STATUS_CODE" = "200" ]; then
+              IB_TAG="$INPUT_VER"
+            else
+              IB_TAG="$OFFICIAL_VER"
+              echo "官方下载站暂未发布 $INPUT_VER 基础镜像(状态码 $STATUS_CODE)，自动采用官方最新稳定底包 $OFFICIAL_VER 编译！"
+            fi
+            echo "Release 发布版本号: $RELEASE_TAG, 底包构建引擎版本号: $IB_TAG"
           else
-            # 从官方 release 目录自动抓取最新真实版本 (例如 25.12.2)
-            TARGET_TAG=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/' | sed 's#href="##; s#/##' | sort -V | tail -n 1)
-            echo "检测到官方最新稳定版本: $TARGET_TAG"
+            RELEASE_TAG="$OFFICIAL_VER"
+            IB_TAG="$OFFICIAL_VER"
+            echo "检测到官方最新稳定版本: $RELEASE_TAG"
           fi
 
-          echo "release_tag=$TARGET_TAG" >> $GITHUB_OUTPUT
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "ib_tag=$IB_TAG" >> $GITHUB_OUTPUT
 
           # 2. 检查本仓库是否已经编译过该版本
           FORCE="${{ github.event.inputs.force }}"
-          REPO_TAG="v${TARGET_TAG}"
+          REPO_TAG="v${RELEASE_TAG}"
           EXISTS=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/releases/tags/${REPO_TAG}" | jq -r .tag_name)
 
           if [ "$EXISTS" = "$REPO_TAG" ] && [ "$FORCE" != "true" ] && [ "${{ github.event_name }}" = "schedule" ]; then
-            echo ">> 状态: 版本 $TARGET_TAG 已经发布过固件，无需重复编译！"
+            echo ">> 状态: 版本 $RELEASE_TAG 已经发布过固件，无需重复编译！"
             echo "should_build=false" >> $GITHUB_OUTPUT
           else
-            echo ">> 状态: 发现新版本 $TARGET_TAG 或满足触发条件，立即启动构建！"
+            echo ">> 状态: 准备构建版本 $RELEASE_TAG (底包引擎: $IB_TAG)！"
             echo "should_build=true" >> $GITHUB_OUTPUT
           fi
 
@@ -70,7 +81,7 @@ jobs:
       - name: 下载官方 ImageBuilder
         if: steps.check_ver.outputs.should_build == 'true'
         run: |
-          TARGET_TAG="${{ steps.check_ver.outputs.release_tag }}"
+          TARGET_TAG="${{ steps.check_ver.outputs.ib_tag }}"
           ARCH="x86-64"
           IB_URL="https://downloads.immortalwrt.org/releases/${TARGET_TAG}/targets/x86/64/immortalwrt-imagebuilder-${TARGET_TAG}-${ARCH}.Linux-x86_64.tar.zst"
           echo "下载构建引擎: $IB_URL"
