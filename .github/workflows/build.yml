@@ -85,7 +85,7 @@ jobs:
           ARCH="x86-64"
           IB_URL="https://downloads.immortalwrt.org/releases/${TARGET_TAG}/targets/x86/64/immortalwrt-imagebuilder-${TARGET_TAG}-${ARCH}.Linux-x86_64.tar.zst"
           echo "下载构建引擎: $IB_URL"
-          wget -qO ib.tar.zst "$IB_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib.tar.zst "$IB_URL" || wget -4 --tries=5 -O ib.tar.zst "$IB_URL"
           tar --zstd -xf ib.tar.zst
           mv immortalwrt-imagebuilder-* ib
           mkdir -p ib/packages ib/files/opt/ikuai-bypass
@@ -94,12 +94,12 @@ jobs:
         if: steps.check_ver.outputs.should_build == 'true'
         run: |
           # 1. 抓取与提取 LuCI 控制面板
-          IPK_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*luci.*\\.ipk$")) | .browser_download_url' | head -n 1)
+          IPK_URL=$(curl -4 -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*luci.*\\.ipk$")) | .browser_download_url' | head -n 1)
           if [ -z "$IPK_URL" ] || [ "$IPK_URL" = "null" ]; then
             IPK_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-luci-openwrt-all.ipk"
           fi
           echo "下载 LuCI 插件: $IPK_URL"
-          wget -qO /tmp/luci-ikuai-bypass.ipk "$IPK_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o /tmp/luci-ikuai-bypass.ipk "$IPK_URL" || wget -4 --tries=5 -O /tmp/luci-ikuai-bypass.ipk "$IPK_URL"
           
           # 直接提取 ipk 内的文件系统到 ib/files (全面兼容 apk 与 opkg 架构)
           mkdir -p /tmp/ipk-extract
@@ -111,12 +111,12 @@ jobs:
           fi
 
           # 2. 抓取 x86_64 CLI 核心程序并解压就位
-          CLI_URL=$(curl -sL https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*cli-linux-x86_64.*\\.zip$")) | .browser_download_url' | head -n 1)
+          CLI_URL=$(curl -4 -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*cli-linux-x86_64.*\\.zip$")) | .browser_download_url' | head -n 1)
           if [ -z "$CLI_URL" ] || [ "$CLI_URL" = "null" ]; then
             CLI_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-cli-linux-x86_64.zip"
           fi
           echo "下载 CLI 核心程序: $CLI_URL"
-          wget -qO /tmp/cli.zip "$CLI_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o /tmp/cli.zip "$CLI_URL" || wget -4 --tries=5 -O /tmp/cli.zip "$CLI_URL"
           unzip -o /tmp/cli.zip -d ib/files/opt/ikuai-bypass/
           chmod +x ib/files/opt/ikuai-bypass/ikuai-bypass* || true
           if [ -f ib/files/opt/ikuai-bypass/ikuai-bypass-cli-linux-x86_64 ]; then
