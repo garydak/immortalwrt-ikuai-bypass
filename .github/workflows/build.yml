@@ -209,8 +209,8 @@ jobs:
           # 1. 产出 PVE 专用 QCOW2 (极致压缩)
           qemu-img convert -f raw -O qcow2 -c "$RAW_IMG" immortalwrt-pve.qcow2
 
-          # 2. 产出 ESXi 专用 VMDK
-          qemu-img convert -f raw -O vmdk -o subformat=monolithicFlat "$RAW_IMG" immortalwrt-esxi.vmdk
+          # 2. 产出 ESXi 专用 VMDK (streamOptimized 单文件压缩格式)
+          qemu-img convert -f raw -O vmdk -o subformat=streamOptimized "$RAW_IMG" immortalwrt-esxi.vmdk
           gzip -9 -k immortalwrt-esxi.vmdk
 
           mkdir -p /tmp/output/
