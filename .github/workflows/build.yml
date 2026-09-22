@@ -123,11 +123,20 @@ jobs:
             mv ib/files/opt/ikuai-bypass/ikuai-bypass-cli-linux-x86_64 ib/files/opt/ikuai-bypass/ikuai-bypass
           fi
 
-          # 3. 复制预设文件 (首次启动脚本 + 预配好且解除国内锁的 config.yml)
+          # 2.1 固化离线安装与检测脚本（彻底杜绝 LuCI 访问 GitHub Pages 超时报 Error）
+          mkdir -p ib/files/opt/ikuai-bypass/install-cache/install-file
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/opt/ikuai-bypass/install-cache/install.sh "https://joyanhui.github.io/ikuai-bypass/install.sh" || true
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/opt/ikuai-bypass/install-cache/install-file/common.sh "https://joyanhui.github.io/ikuai-bypass/install-file/common.sh" || true
+          chmod +x ib/files/opt/ikuai-bypass/install-cache/install.sh ib/files/opt/ikuai-bypass/install-cache/install-file/common.sh 2>/dev/null || true
+          echo "v4.4.110" > ib/files/opt/ikuai-bypass/.version
+
+          # 3. 复制预设文件 (首次启动脚本 + 服务管理 + 离线增强脚本 + 预配好且解除国内锁的 config.yml)
           if [ -d "files" ]; then
             cp -r files/* ib/files/
           fi
           chmod +x ib/files/etc/uci-defaults/* || true
+          chmod +x ib/files/etc/init.d/* || true
+          chmod +x ib/files/usr/libexec/* || true
 
       - name: 编译生成基础镜像
         if: steps.check_ver.outputs.should_build == 'true'
