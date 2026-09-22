@@ -1,31 +1,92 @@
-ikuai-url: https://192.168.0.1
+ikuai-url: http://192.168.0.1
+ikuai-url-ignore-cert: true
 username: admin
 password: ""
-ikuai-url-ignore-cert: true
-cron: "0 7 * * *"
+cron: 0 7 * * *
+AddErrRetryWait: 10s
+AddWait: 1s
+run-mode: cronAft
 mode: ipgroup
-next-hop-gateway: "192.168.0.2"
-custom-lan-ip: "192.168.0.3-192.168.0.254"
+
+proxy:
+  mode: smart
+  url: ""
+  user: ""
+  pass: ""
+
+github-proxy: "https://gh-proxy.com/"
+custom-isp:
+  - tag: 国内IP列表
+    url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt
+  - tag: telegram
+    url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/telegram.txt
+  - tag: google
+    url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/google.txt
+
+stream-domain:
+  - interface: wan2
+    src-addr: 192.168.0.3-192.168.0.254
+    src-addr-opt-ipgroup: ""
+    url: https://raw.githubusercontent.com/Loyalsoldier/v2ray-rules-dat/release/gfw.txt
+    tag: gfw
+  - interface: wan2
+    src-addr: 192.168.0.3-192.168.0.254
+    src-addr-opt-ipgroup: ""
+    url: https://raw.githubusercontent.com/joyanhui/ikuai-bypass/main/private/bypass-domain-list.txt
+    tag: MyBypass
+  - interface: wan1
+    src-addr: 192.168.0.3-192.168.0.254
+    src-addr-opt-ipgroup: ""
+    url: https://raw.githubusercontent.com/joyanhui/ikuai-bypass/main/private/direct-domain-list.txt
+    tag: MyDirect
 
 ip-group:
+  - tag: 国内
+    url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt
   - tag: Telegram
     url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/telegram.txt
 
+ipv6-group:
+  - tag: 国内v6
+    url: https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt
+
 stream-ipport:
+  - type: "0"
+    opt-tagname: "国内流量"
+    interface: wan1
+    nexthop: ""
+    src-addr: 192.168.0.3-192.168.0.254
+    src-addr-opt-ipgroup: ""
+    src-addr-inv: 1
+    ip-group: 国内
+    dst-addr-inv: 1
+    prio: 0
+    mode: 6
+    ifaceband: 0
+    protocol: "tcp+udp"
   - type: "1"
     opt-tagname: "负责分流到下一跳"
     interface: ""
-    nexthop: "192.168.0.2"
-    src-addr: "192.168.0.3-192.168.0.254"
-    dst-addr: "198.18.0.0-198.19.255.255"
+    nexthop: 192.168.0.2
+    src-addr: 192.168.0.3-192.168.0.254
+    src-addr-opt-ipgroup: ""
+    src-addr-inv: 0
     ip-group: "Telegram"
     dst-addr-inv: 0
     prio: 0
+    mode: 0
+    ifaceband: 0
     protocol: "tcp+udp"
 
 webui:
-  enable: true
-  port: 19001
+  port: "19001"
   user: admin
   pass: ""
+  enable: true
   cdn-prefix: https://cdn.jsdelivr.net/npm
+
+MaxNumberOfOneRecords:
+  Isp: 5000
+  Ipv4: 2450
+  Ipv6: 1600
+  Domain: 3000
