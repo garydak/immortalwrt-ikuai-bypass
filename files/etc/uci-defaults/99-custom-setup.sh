@@ -9,7 +9,7 @@ lan_ip="192.168.0.2/24"    # 重点：带上 /24，杜绝 /32 单机掩码
 gateway_ip="192.168.0.1"   # 主路由 iKuai 的 IP
 dns_ip="192.168.0.1"       # DNS 指向 iKuai
 
-# 密码设置为空，让 LuCI 在登录后提示用户设置密码
+# 密码为空，登录后提示用户设置密码
 passwd -d root >/dev/null 2>&1
 
 # ========================================================
@@ -44,9 +44,21 @@ uci set luci.main.mediaurlbase='/luci-static/argon'
 uci commit luci
 
 # ========================================================
-# 6. 激活并开启 iKuai Bypass 服务开机自启
+# 6. 预热 iKuai Bypass 本地离线检测缓存（免联网）
+# ========================================================
+if [ -d /opt/ikuai-bypass/install-cache ]; then
+  mkdir -p /tmp/ikuai-bypass-install-cache/install-file
+  cp -rf /opt/ikuai-bypass/install-cache/install.sh /tmp/ikuai-bypass-install-cache/install.sh 2>/dev/null || true
+  cp -rf /opt/ikuai-bypass/install-cache/install-file/common.sh /tmp/ikuai-bypass-install-cache/install-file/common.sh 2>/dev/null || true
+  chmod +x /tmp/ikuai-bypass-install-cache/install.sh /tmp/ikuai-bypass-install-cache/install-file/common.sh 2>/dev/null || true
+  date +%s > /tmp/ikuai-bypass-install-cache/.stamp 2>/dev/null || true
+fi
+
+# ========================================================
+# 7. 激活并开启 iKuai Bypass 服务开机自启
 # ========================================================
 if [ -f /etc/init.d/ikuai-bypass ]; then
+  chmod +x /etc/init.d/ikuai-bypass
   /etc/init.d/ikuai-bypass enable
   /etc/init.d/ikuai-bypass start
 fi
