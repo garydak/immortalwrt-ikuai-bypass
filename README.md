@@ -1,5 +1,122 @@
 # ⚡ ImmortalWrt 终极旁路由自动化构建系统 (PVE 9.2.2 & ESXi)
 
+> **全自动化构建 · 零配置即刷即用 · 深度集成 iKuai Bypass · 全集成 OpenClash 最新版与 Meta(v3)离线内核 · 完美释放双线多线负载 · 上游稳定版自动巡检追踪**
+
+---
+
+## 📖 项目简介
+
+本项目是专为 **爱快（iKuai）+ ImmortalWrt 旁路由** 双软路由架构量身打造的高性能、高可用自动化固件构建系统。
+
+基于 GitHub Actions 与 ImmortalWrt 官方 ImageBuilder 引擎构建，深度融合了 [joyanhui/ikuai-bypass](https://github.com/joyanhui/ikuai-bypass) 下一代下一跳智能分流技术与 [vernesong/OpenClash](https://github.com/vernesong/OpenClash) 最新图形代理，彻底解决传统旁路由“一人折腾、全家断网”的单点故障痛点，并终结了国内首次配置 OpenClash 无法下载内核的死锁循环！
+
+---
+
+## 🌟 固件核心优势与特性
+
+### 1. 终结旁路由单点故障（电信级高可用）
+* **权威网关收归爱快**：局域网 DHCP 默认网关与 DNS 保持为爱快主路由（`192.168.0.1`）。
+* **旁路由宕机免死**：无论 OpenWrt 重启、升级、核心崩溃还是死机，全家正常上网、看电视、工作通讯 **100% 毫秒不卡顿、毫无感知**！
+* **国内流量零损耗直出**：国内日常流量（占 95% 以上）由爱快直接转发至光猫原生宽带，不经过旁路由虚拟网卡中转，大幅降低 CPU 负载与发热，测速轻松跑满千兆/双千兆极限。
+
+### 2. 全集成 OpenClash 最新版 + Meta(v3) 离线内核（开箱零下载即用）
+* **最新插件本体**：预装 Vernesong 最新版 **v0.47.156**，完美适配 NFTables 与现代 Sniffer 域名嗅探。
+* **满血硬件加速内核**：固化解压 **Mihomo (Clash.Meta) `linux-amd64-v3`** 最新内核至 `/etc/openclash/core/clash_meta`，专为 Intel 12 代（如 i3-1215U）等现代处理器的 AVX2/FMA/AES 指令集深度优化，跑满千兆与 2.5G 极速吞吐。
+* **离线规则数据库就绪**：预装 `Country.mmdb`、`GeoIP.dat`、`GeoSite.dat` 全套规则库至 `/etc/openclash/`。
+* **彻底告别首次下载死循环**：传统固件装完 OpenClash 后必须连接 GitHub 才能下载内核与数据库，常因网络阻断导致启动无限报错。本固件开机内核即在位，导入订阅即可秒级启动！
+
+### 3. 双宽带多线负载完美兼容（2:1 并发叠加）
+* **解除端口分流死锁**：深度优化了分流策略，彻底移除了将国内流量死锁在单一 WAN 口的传统弊端。
+* **原生负载均衡生效**：所有国内数据包自然进入爱快底层的 `ML_1` (wan1:wan2 = 2:1) 多线负载策略，双宽带并发叠加发挥到极致。
+
+### 4. 精准智能分流与 NAS 专线支持
+* **下一跳定向引流**：仅将真正命中 GFWList 与境外特定网段（如 Telegram）的目标流量下一跳送入 OpenWrt 旁路由（`192.168.0.2`），由 OpenClash（TUN 模式）进行无感加速。
+* **NAS 专线完整覆盖**：NAS 设备（`192.168.0.188`）全协议（`tcp+udp`）严格绑定 WAN2，既保障远程 Web/DSM 访问源进源出，又完美支持 PT/BT 极速做种与 P2P 异地组网打洞。
+
+### 5. 首次开机零配置（Zero-Touch Provisioning）
+* 刷机首次开机，系统通过底层的 `uci-defaults` 脚本静默执行初始化：
+  * 自动锁定静态 IP：**`192.168.0.2/24`**（严格遵循新版 CIDR 规范，杜绝 `/32` 单机掩码死机陷阱）；
+  * 自动将网关与 DNS 指向爱快 **`192.168.0.1`**；
+  * 自动清理无用的 WAN/WAN6 拨号口；
+  * 彻底关闭旁路由 DHCP 与 IPv6 RA 宣告，避免局域网地址冲突；
+  * 默认启用 **Argon 极简现代主题**，界面纯净中文；
+  * 自动配置 OpenClash 预设为 Meta 内核与 `linux-amd64-v3` 架构，禁用无用自动下载。
+
+### 6. 双平台原生镜像双向直出
+* **PVE 9.2.2 专用**：`immortalwrt-pve.qcow2`（VirtIO 极致压缩，体积仅 ~45MB，一键命令挂载开机）。
+* **ESXi 专用**：`immortalwrt-esxi.vmdk.gz`（monolithicFlat 单盘扁平格式，解压直接挂载）。
+* 内置 **`qemu-ga`（QEMU Guest Agent）**，PVE 仪表盘实时呈现真实 IP 与流量，支持平滑一键平稳关机。
+
+---
+
+## 📦 预装核心软件包清单
+
+| 类别 | 包含软件包 | 作用说明 |
+| :--- | :--- | :--- |
+| **旁路分流** | `luci-app-ikuai-bypass` + x86_64 CLI 核心 + 19001 WebUI | 自动抓取规则并调用爱快官方 API 增量同步，自带 Web 可视化面板 |
+| **出海代理** | `luci-app-openclash` (v0.47.156) + `Mihomo Meta v3 内核` + `GeoIP/GeoSite 规则库` | Meta 内核支持，TUN 模式低延迟透明转发，开机即用免在线下载 |
+| **网络基础** | `-dnsmasq`, `dnsmasq-full`, `bind-dig`, `ip-full`, `ipset`, `kmod-tun` | 完整 DNS 解析、TUN 虚拟网卡与 IPSet 路由支持 |
+| **虚拟化** | `qemu-ga` | PVE / ESXi 虚拟机状态通信与平滑电源管理 |
+| **纯净主题** | `luci-theme-argon` + `luci-app-argon-config` | 极简现代化高颜值界面，剔除臃肿与冲突插件 |
+
+---
+
+## 🚀 镜像部署与关键避坑指南
+
+### 1. PVE 9.2.2 极速部署（推荐 ⭐⭐⭐）
+
+> [!IMPORTANT]
+> **PVE 处理器（CPU）设置核心避坑指南**：
+> 在 PVE 创建或修改虚拟机时，**【硬件】->【处理器 (CPU)】->【类别 (Type)】务必选择 `host`（直通物理 CPU 架构）**，千万不要用默认的 `kvm64`！
+> * 只有设为 `host`，虚拟机内部才能完整调用物理 CPU（如 i3-1215U）的 AVX2/AES 指令集，发挥 `linux-amd64-v3` 内核的最佳性能，同时避免启动时报 `Illegal instruction`（非法指令）错误！
+
+1. 在 PVE 网页控制台新建虚拟机（ID 填 `102`，名称起名 `OpenWrt`，网络选择 `vmbr0`，勾选 `Qemu Agent`，**CPU 类别选 `host`**，磁盘页点击垃圾桶删掉默认空盘）；
+2. 从 Releases 中下载 `immortalwrt-pve.qcow2` 并上传到 PVE 的 `/root/` 目录；
+3. 打开 PVE 节点的 Shell 终端执行导入命令：
+   ```bash
+   qm importdisk 102 immortalwrt-pve.qcow2 local-lvm
+   ```
+4. 回到 PVE 网页：
+   * 在虚拟机的【硬件】中双击挂载刚生成的未分配磁盘（总线选择 **SCSI** 并确认）；
+   * 在【选项】->【引导顺序】中勾选该 SCSI 磁盘并拖动到第一位；
+   * 点击【启动】开机！仪表盘将自动识别出 IP：`192.168.0.2`。
+
+### 2. ESXi 部署
+1. 下载 Releases 中的 `immortalwrt-esxi.vmdk.gz` 并解压得到 `immortalwrt-esxi.vmdk`；
+2. 上传至 ESXi 存储器，新建虚拟机并选择“使用现有磁盘”，挂载开机即可。
+
+---
+
+## ⚙️ 首次使用配置指南
+
+### 1. 登录 iKuai Bypass WebUI 绑定密码
+1. 虚拟机开机后，在局域网内任意浏览器打开：
+   * **Web 管理后台**：`http://192.168.0.2:19001`
+   * （或登录 OpenWrt `http://192.168.0.2` -> 进入【服务】->【iKuai Bypass】点击 Web 链接）
+2. 初始登录用户名：`admin`，密码留空（直接登录）；
+3. 点击进入【配置助手】->【文本编辑】：
+   * 找到 `password:` 项，填入您自己爱快主路由的真实管理员登录密码（如 `password: "your_password"`）；
+   * 点击【保存配置】并确保定时任务处于启用状态即可！
+
+### 2. OpenClash 极速启用
+1. 登录 OpenWrt 网页后台（`http://192.168.0.2`），进入【服务】->【OpenClash】；
+2. 进入【配置订阅】，上传或导入您的代理节点配置文件；
+3. 进入【插件设置】->【模式设置】，推荐运行模式勾选 **Fake-IP (TUN 模式)**，勾选【启用 Meta 域名嗅探】；
+4. 点击【启动 OpenClash】即可秒级运行，无需等待任何内核下载！
+
+---
+
+## 🙏 致敬与鸣谢
+
+* [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)：优秀强大的开源软路由系统与 ImageBuilder 架构。
+* [joyanhui/ikuai-bypass](https://github.com/joyanhui/ikuai-bypass)：卓越的爱快自动化旁路分流项目，带来全新的网络拓扑灵感。
+* [vernesong/OpenClash](https://github.com/vernesong/OpenClash)：功能强大的图形化规则代理核心。
+* [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)：高速高效的下一代代理内核。
+
+---
+*Licensed under GPL-3.0.*
+# ⚡ ImmortalWrt 终极旁路由自动化构建系统 (PVE 9.2.2 & ESXi)
+
 > **全自动化构建 · 零配置即刷即用 · 深度集成 iKuai Bypass · 完美释放双线多线负载 · 上游稳定版自动巡检追踪**
 
 ---
