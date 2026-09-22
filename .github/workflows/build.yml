@@ -88,6 +88,249 @@ jobs:
           curl -4 -fL --retry 5 --retry-delay 2 -o ib.tar.zst "$IB_URL" || wget -4 --tries=5 -O ib.tar.zst "$IB_URL"
           tar --zstd -xf ib.tar.zst
           mv immortalwrt-imagebuilder-* ib
+          mkdir -p ib/packages ib/files/opt/ikuai-bypass ib/files/etc/openclash/core
+
+      - name: 注入 iKuai Bypass (IPK 插件与 CLI 核心)
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          # 1. 抓取与提取 LuCI 控制面板
+          IPK_URL=$(curl -4 -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*luci.*\\.ipk$")) | .browser_download_url' | head -n 1)
+          if [ -z "$IPK_URL" ] || [ "$IPK_URL" = "null" ]; then
+            IPK_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-luci-openwrt-all.ipk"
+          fi
+          echo "下载 LuCI 插件: $IPK_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o /tmp/luci-ikuai-bypass.ipk "$IPK_URL" || wget -4 --tries=5 -O /tmp/luci-ikuai-bypass.ipk "$IPK_URL"
+          
+          # 直接提取 ipk 内的文件系统到 ib/files (全面兼容 apk 与 opkg 架构)
+          mkdir -p /tmp/ipk-extract
+          tar -zxf /tmp/luci-ikuai-bypass.ipk -C /tmp/ipk-extract/ 2>/dev/null || (cd /tmp/ipk-extract && ar -x /tmp/luci-ikuai-bypass.ipk) || true
+          if [ -f /tmp/ipk-extract/data.tar.gz ]; then
+            tar -zxf /tmp/ipk-extract/data.tar.gz -C ib/files/
+          elif [ -f /tmp/ipk-extract/data.tar.xz ]; then
+            tar -xf /tmp/ipk-extract/data.tar.xz -C ib/files/
+          fi
+
+          # 2. 抓取 x86_64 CLI 核心程序并解压就位
+          CLI_URL=$(curl -4 -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/joyanhui/ikuai-bypass/releases/latest | jq -r '.assets[] | select(.name | test(".*cli-linux-x86_64.*\\.zip$")) | .browser_download_url' | head -n 1)
+          if [ -z "$CLI_URL" ] || [ "$CLI_URL" = "null" ]; then
+            CLI_URL="https://github.com/joyanhui/ikuai-bypass/releases/download/ikuai-bypass-v4.4.110/ikuai-bypass-cli-linux-x86_64.zip"
+          fi
+          echo "下载 CLI 核心程序: $CLI_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o /tmp/cli.zip "$CLI_URL" || wget -4 --tries=5 -O /tmp/cli.zip "$CLI_URL"
+          unzip -o /tmp/cli.zip -d ib/files/opt/ikuai-bypass/
+          chmod +x ib/files/opt/ikuai-bypass/ikuai-bypass* || true
+          if [ -f ib/files/opt/ikuai-bypass/ikuai-bypass-cli-linux-x86_64 ]; then
+            mv ib/files/opt/ikuai-bypass/ikuai-bypass-cli-linux-x86_64 ib/files/opt/ikuai-bypass/ikuai-bypass
+          fi
+
+          # 2.1 固化离线安装与检测脚本（彻底杜绝 LuCI 访问 GitHub Pages 超时报 Error）
+          mkdir -p ib/files/opt/ikuai-bypass/install-cache/install-file
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/opt/ikuai-bypass/install-cache/install.sh "https://joyanhui.github.io/ikuai-bypass/install.sh" || true
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/opt/ikuai-bypass/install-cache/install-file/common.sh "https://joyanhui.github.io/ikuai-bypass/install-file/common.sh" || true
+          chmod +x ib/files/opt/ikuai-bypass/install-cache/install.sh ib/files/opt/ikuai-bypass/install-cache/install-file/common.sh 2>/dev/null || true
+          echo "v4.4.110" > ib/files/opt/ikuai-bypass/.version
+
+          # 3. 复制预设文件 (首次启动脚本 + 服务管理 + 离线增强脚本 + 预配好且解除国内锁的 config.yml)
+          if [ -d "files" ]; then
+            cp -r files/* ib/files/
+          fi
+          chmod +x ib/files/etc/uci-defaults/* || true
+          chmod +x ib/files/etc/init.d/* || true
+          chmod +x ib/files/usr/libexec/* || true
+
+      - name: 注入 OpenClash (最新 IPK 插件 + Meta v3 核心 + 离线 Geo 规则库)
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          mkdir -p ib/files/etc/openclash/core ib/files/etc/openclash/config /tmp/oc-extract
+
+          # 1. 抓取与提取 Vernesong 官方最新版 luci-app-openclash IPK
+          OC_IPK_URL=$(curl -4 -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/vernesong/OpenClash/releases/latest | jq -r '.assets[] | select(.name | test(".*luci-app-openclash.*\\.ipk$")) | .browser_download_url' | head -n 1)
+          if [ -z "$OC_IPK_URL" ] || [ "$OC_IPK_URL" = "null" ]; then
+            OC_IPK_URL="https://github.com/vernesong/OpenClash/releases/download/v0.47.156/luci-app-openclash_0.47.156_all.ipk"
+          fi
+          echo "下载最新 OpenClash 插件: $OC_IPK_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o /tmp/openclash.ipk "$OC_IPK_URL" || wget -4 --tries=5 -O /tmp/openclash.ipk "$OC_IPK_URL"
+          
+          # 解包 IPK 到 ib/files
+          tar -zxf /tmp/openclash.ipk -C /tmp/oc-extract/ 2>/dev/null || (cd /tmp/oc-extract && ar -x /tmp/openclash.ipk) || true
+          if [ -f /tmp/oc-extract/data.tar.gz ]; then
+            tar -zxf /tmp/oc-extract/data.tar.gz -C ib/files/
+          elif [ -f /tmp/oc-extract/data.tar.xz ]; then
+            tar -xf /tmp/oc-extract/data.tar.xz -C ib/files/
+          fi
+
+          # 2. 抓取与固化 Mihomo (Clash.Meta) linux-amd64-v3 内核
+          META_URL=$(curl -4 -sL https://api.github.com/repos/vernesong/mihomo-oix/releases/tags/Pre-Alpha | jq -r '.assets[] | select(.name | test(".*linux-amd64-v3.*\\.gz$")) | .browser_download_url' | head -n 1)
+          if [ -z "$META_URL" ] || [ "$META_URL" = "null" ]; then
+            META_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-linux-amd64-v3-v1.19.31.gz"
+          fi
+          echo "下载 Meta v3 核心: $META_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o /tmp/clash_meta.gz "$META_URL" || wget -4 --tries=5 -O /tmp/clash_meta.gz "$META_URL"
+          gzip -dc /tmp/clash_meta.gz > ib/files/etc/openclash/core/clash_meta
+          chmod +x ib/files/etc/openclash/core/clash_meta
+          ln -sf /etc/openclash/core/clash_meta ib/files/etc/openclash/core/clash || true
+
+          # 3. 预下载最新 GeoIP 与 GeoSite 数据库（开机零下载即可正常匹配分流）
+          echo "下载 Country.mmdb, GeoIP.dat, GeoSite.dat 规则库..."
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/etc/openclash/Country.mmdb "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb" || true
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/etc/openclash/GeoIP.dat "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat" || true
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib/files/etc/openclash/GeoSite.dat "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat" || true
+
+      - name: 编译生成基础镜像
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          cd ib
+          make image PROFILE="generic" \
+            PACKAGES="base-files ca-bundle dropbear e2fsprogs firewall4 fstools \
+            grub2-bios-setup kmod-button-hotplug kmod-nft-offload libc libgcc \
+            libustream-mbedtls logd mtd netifd nftables odhcp6c odhcpd-ipv6only \
+            partx-utils procd-ujail uci uclient-fetch urandom-seed urngd \
+            -kmod-amazon-ena -kmod-amd-xgbe -kmod-bnx2 -kmod-dmac-intel -kmod-e1000 \
+            -kmod-e1000e -kmod-forcedeth -kmod-igb -kmod-ixgbe -kmod-r8169 -kmod-tg3 \
+            -kmod-drm-i915 qemu-ga luci luci-ssl luci-i18n-base-zh-cn \
+            luci-app-attendedsysupgrade luci-i18n-attendedsysupgrade-zh-cn -ppp \
+            -ppp-mod-pppoe -dnsmasq dnsmasq-full bash curl \
+            ca-certificates coreutils coreutils-nohup ip-full ipset kmod-tun \
+            kmod-inet-diag kmod-nft-tproxy kmod-nft-nat unzip tar bind-dig \
+            luci-theme-argon luci-app-argon-config luci-i18n-argon-config-zh-cn \
+            luci-compat luci-lua-runtime luci-app-openclash -luci-theme-bootstrap" \
+            FILES="files"
+
+      - name: 转码生成 PVE 专用 QCOW2 与 ESXi 专用 VMDK
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          cd ib/bin/targets/x86/64/
+          ls -la
+          RAW_GZ=$(ls *ext4-combined.img.gz *combined-ext4.img.gz *combined*.img.gz 2>/dev/null | head -n 1)
+          echo "找到原始镜像: $RAW_GZ"
+          gunzip -k "$RAW_GZ"
+          RAW_IMG="${RAW_GZ%.gz}"
+
+          # 1. 产出 PVE 专用 QCOW2 (极致压缩)
+          qemu-img convert -f raw -O qcow2 -c "$RAW_IMG" immortalwrt-pve.qcow2
+
+          # 2. 产出 ESXi 专用 VMDK
+          qemu-img convert -f raw -O vmdk -o subformat=monolithicFlat "$RAW_IMG" immortalwrt-esxi.vmdk
+          gzip -9 -k immortalwrt-esxi.vmdk
+
+          mkdir -p /tmp/output/
+          cp immortalwrt-pve.qcow2 /tmp/output/
+          cp immortalwrt-esxi.vmdk.gz /tmp/output/
+          cp "$RAW_GZ" /tmp/output/
+          ls -lh /tmp/output/
+
+      - name: 自动发布为 GitHub Release (永久保存、直链下载)
+        if: steps.check_ver.outputs.should_build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.check_ver.outputs.release_tag }}"
+          name: "ImmortalWrt v${{ steps.check_ver.outputs.release_tag }} (PVE & ESXi Auto-Build)"
+          body: |
+            ## 🎉 自动构建版本：ImmortalWrt v${{ steps.check_ver.outputs.release_tag }}
+            
+            ### 📌 特性说明
+            * **适用环境**：PVE 9.2.2 / ESXi 7.0/8.0 (⚠️ **PVE 处理器 CPU 类别务必设为 `host`**)
+            * **核心组件**：内置 dnsmasq-full、qemu-ga 以及 iKuai Bypass (CLI + LuCI 界面 + 19001 WebUI)
+            * **全集成 OpenClash**：集成最新版 OpenClash (v0.47.156) + Mihomo (Clash.Meta) `linux-amd64-v3` 内核 + 离线 `GeoIP/GeoSite` 规则库，开机零下载即用
+            * **开机零配置**：默认 IP 为 `192.168.0.2/24`，网关指向爱快 `192.168.0.1`，开机即用
+            * **分流优化**：预置解除国内流量锁死的配置，完美兼容爱快双线 2:1 多线负载
+            * **现代界面**：默认 Argon 极简主题，纯净无臃肿插件，原生内核零冲突
+            
+            ### 📥 镜像下载指引
+            * **PVE 9.2.2 推荐**：下载 `immortalwrt-pve.qcow2`，使用 `qm importdisk <VMID> immortalwrt-pve.qcow2 local-lvm` 导入。
+            * **ESXi 推荐**：下载 `immortalwrt-esxi.vmdk.gz`，解压后上传至存储直接挂载。
+            * **通用 RAW 格式**：下载原始压缩包，适用于物理机写盘或自转其他格式。
+          files: /tmp/output/*
+name: Build ImmortalWrt (Auto-Update & Dual Output)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '指定构建版本 (留空或输入 auto 则自动检测官方最新稳定版)'
+        required: false
+        default: 'auto'
+      force:
+        description: '强制重新编译 (即使该版本已存在也重新构建)'
+        required: false
+        type: boolean
+        default: false
+
+  schedule:
+    # 每天北京时间早晨 08:00 (UTC 00:00) 自动检查一次官方是否有新稳定版
+    - cron: '0 0 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    name: Check Version and Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 检查官方最新稳定版本与比对
+        id: check_ver
+        run: |
+          # 1. 确定目标版本
+          INPUT_VER="${{ github.event.inputs.version }}"
+          OFFICIAL_VER=$(curl -sL https://downloads.immortalwrt.org/releases/ | grep -oE 'href="[0-9]+\.[0-9]+\.[0-9]+/' | sed 's#href="##; s#/##' | sort -V | tail -n 1)
+          
+          if [ -n "$INPUT_VER" ] && [ "$INPUT_VER" != "auto" ]; then
+            RELEASE_TAG="$INPUT_VER"
+            # 检查官方是否存在此版本 ImageBuilder，如果不存在则回退使用官方最新稳定版底包
+            STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://downloads.immortalwrt.org/releases/${INPUT_VER}/targets/x86/64/")
+            if [ "$STATUS_CODE" = "200" ]; then
+              IB_TAG="$INPUT_VER"
+            else
+              IB_TAG="$OFFICIAL_VER"
+              echo "官方下载站暂未发布 $INPUT_VER 基础镜像(状态码 $STATUS_CODE)，自动采用官方最新稳定底包 $OFFICIAL_VER 编译！"
+            fi
+            echo "Release 发布版本号: $RELEASE_TAG, 底包构建引擎版本号: $IB_TAG"
+          else
+            RELEASE_TAG="$OFFICIAL_VER"
+            IB_TAG="$OFFICIAL_VER"
+            echo "检测到官方最新稳定版本: $RELEASE_TAG"
+          fi
+
+          echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          echo "ib_tag=$IB_TAG" >> $GITHUB_OUTPUT
+
+          # 2. 检查本仓库是否已经编译过该版本
+          FORCE="${{ github.event.inputs.force }}"
+          REPO_TAG="v${RELEASE_TAG}"
+          EXISTS=$(curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${REPO_TAG}" | jq -r .tag_name)
+
+          if [ "$EXISTS" = "$REPO_TAG" ] && [ "$FORCE" != "true" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo ">> 状态: 版本 $RELEASE_TAG 已经发布过固件，无需重复编译！"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          else
+            echo ">> 状态: 准备构建版本 $RELEASE_TAG (底包引擎: $IB_TAG)！"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 准备构建环境
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev \
+            gawk git gettext libssl-dev xsltproc wget curl unzip qemu-utils zstd jq \
+            genisoimage
+          sudo ln -sf /usr/bin/genisoimage /usr/bin/mkisofs || true
+
+      - name: 下载官方 ImageBuilder
+        if: steps.check_ver.outputs.should_build == 'true'
+        run: |
+          TARGET_TAG="${{ steps.check_ver.outputs.ib_tag }}"
+          ARCH="x86-64"
+          IB_URL="https://downloads.immortalwrt.org/releases/${TARGET_TAG}/targets/x86/64/immortalwrt-imagebuilder-${TARGET_TAG}-${ARCH}.Linux-x86_64.tar.zst"
+          echo "下载构建引擎: $IB_URL"
+          curl -4 -fL --retry 5 --retry-delay 2 -o ib.tar.zst "$IB_URL" || wget -4 --tries=5 -O ib.tar.zst "$IB_URL"
+          tar --zstd -xf ib.tar.zst
+          mv immortalwrt-imagebuilder-* ib
           mkdir -p ib/packages ib/files/opt/ikuai-bypass
 
       - name: 注入 iKuai Bypass (IPK 插件与 CLI 核心)
