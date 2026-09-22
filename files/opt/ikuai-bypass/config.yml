@@ -80,7 +80,7 @@ stream-ipport:
 
 webui:
   port: "19001"
-  user: admin
+  user: ""
   pass: ""
   enable: true
   cdn-prefix: https://cdn.jsdelivr.net/npm
