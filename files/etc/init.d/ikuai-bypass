@@ -1,0 +1,41 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+BIN_PATH="/opt/ikuai-bypass/ikuai-bypass"
+CONFIG_PATH="/opt/ikuai-bypass/config.yml"
+LOCAL_CACHE="/opt/ikuai-bypass/install-cache"
+CACHE_DIR="/tmp/ikuai-bypass-install-cache"
+
+warmup_cache() {
+    if [ -d "${LOCAL_CACHE}" ]; then
+        mkdir -p "${CACHE_DIR}/install-file"
+        cp -rf "${LOCAL_CACHE}/install.sh" "${CACHE_DIR}/install.sh" 2>/dev/null || true
+        cp -rf "${LOCAL_CACHE}/install-file/common.sh" "${CACHE_DIR}/install-file/common.sh" 2>/dev/null || true
+        chmod +x "${CACHE_DIR}/install.sh" "${CACHE_DIR}/install-file/common.sh" 2>/dev/null || true
+        date +%s > "${CACHE_DIR}/.stamp" 2>/dev/null || true
+    fi
+}
+
+start() {
+    warmup_cache
+    if [ -x "${BIN_PATH}" ] && [ -f "${CONFIG_PATH}" ]; then
+        # 避免重复拉起进程
+        if pidof ikuai-bypass >/dev/null 2>&1; then
+            return 0
+        fi
+        ${BIN_PATH} -c ${CONFIG_PATH} > /dev/null 2>&1 &
+    fi
+}
+
+stop() {
+    killall -q -9 ikuai-bypass 2>/dev/null
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
